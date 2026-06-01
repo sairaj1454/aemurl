@@ -24,12 +24,16 @@ HTML_TEMPLATE = """
         .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; background: #f1f3f5; padding: 15px; border-radius: 6px; border: 1px solid #e9ecef; }
         .option-group { display: flex; flex-direction: column; }
         .option-group label { font-weight: bold; margin-bottom: 6px; font-size: 14px; }
-        select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: white; font-size: 14px; }
+        select, input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: white; font-size: 14px; }
         .custom-domain-container { margin-top: 10px; }
-        .custom-domain-container input { padding: 8px; width: 100%; font-family: monospace; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .custom-domain-container input { padding: 8px; width: 100%; font-family: monospace; box-sizing: border-box; }
         .checkbox-group { display: flex; align-items: center; gap: 10px; margin-top: 15px; font-size: 14px; }
         .checkbox-group input { width: 16px; height: 16px; cursor: pointer; }
         
+        /* New Text Replacement Options Style */
+        .replace-group { display: flex; gap: 10px; margin-top: 5px; }
+        .replace-group input { flex: 1; font-family: monospace; }
+
         /* Buttons styling */
         .btn-primary { padding: 12px 28px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600; transition: background 0.2s; }
         .btn-primary:hover { background-color: #0056b3; }
@@ -102,7 +106,7 @@ HTML_TEMPLATE = """
     <h2>Advanced AEM URL Transformer</h2>
     <form method="POST" action="/">
         <label for="url_input"><strong>Paste paths or URLs (one per line):</strong></label>
-        <textarea name="url_input" id="url_input" placeholder="/content/aerobt/...\nhttp://10.24.122.43:4502/editor.html/..."></textarea>
+        <textarea name="url_input" id="url_input" placeholder="/content/aerobt/...\\nhttp://10.24.122.43:4502/editor.html/..."></textarea>
         
         <div class="options-grid">
             <div class="option-group">
@@ -127,6 +131,14 @@ HTML_TEMPLATE = """
                     <option value="force_add" {% if selected_opts.editor_action == 'force_add' %}selected{% endif %}>Force add /editor.html</option>
                     <option value="force_remove" {% if selected_opts.editor_action == 'force_remove' %}selected{% endif %}>Force remove /editor.html</option>
                 </select>
+            </div>
+
+            <div class="option-group" style="grid-column: span 2;">
+                <label>Path Text Replacement (Optional):</label>
+                <div class="replace-group">
+                    <input type="text" name="find_text" placeholder="Find string (e.g., insights)" value="{{ selected_opts.find_text }}">
+                    <input type="text" name="replace_text" placeholder="Replace with (e.g., insights-old)" value="{{ selected_opts.replace_text }}">
+                </div>
             </div>
         </div>
 
@@ -161,7 +173,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-def transform_single_url(input_str, env, custom_domain, editor_action, use_http):
+def transform_single_url(input_str, env, custom_domain, editor_action, use_http, find_text, replace_text):
     if not input_str:
         return ""
     
@@ -180,9 +192,17 @@ def transform_single_url(input_str, env, custom_domain, editor_action, use_http)
     # Isolate root path string
     if input_str.startswith("http://") or input_str.startswith("https://"):
         parsed = urlparse(input_str)
+        # If preserving or pointing to custom/local, let's inherit the host if requested
+        if env == "custom" and not custom_domain:
+            target_domain = parsed.netloc
+            scheme = parsed.scheme
         path = parsed.path
     else:
         path = input_str if input_str.startswith("/") else f"/{input_str}"
+
+    # Apply Path Text Replacement if "find_text" is provided
+    if find_text:
+        path = path.replace(find_text, replace_text)
 
     # Handle /editor.html structural state
     is_editor = path.startswith("/editor.html")
@@ -207,7 +227,14 @@ def transform_single_url(input_str, env, custom_domain, editor_action, use_http)
 @app.route('/', methods=['GET', 'POST'])
 def home():
     results = []
-    selected_opts = {"env": "qa", "custom_domain": "", "editor_action": "keep", "use_http": False}
+    selected_opts = {
+        "env": "qa", 
+        "custom_domain": "", 
+        "editor_action": "keep", 
+        "use_http": False,
+        "find_text": "",
+        "replace_text": ""
+    }
     
     if request.method == 'POST':
         raw_input = request.form.get('url_input', '')
@@ -215,18 +242,24 @@ def home():
         custom_domain = request.form.get('custom_domain', '')
         editor_action = request.form.get('editor_action', 'keep')
         use_http = request.form.get('use_http') == 'true'
+        find_text = request.form.get('find_text', '').strip()
+        replace_text = request.form.get('replace_text', '')
         
         selected_opts = {
             "env": env, 
             "custom_domain": custom_domain, 
             "editor_action": editor_action, 
-            "use_http": use_http
+            "use_http": use_http,
+            "find_text": find_text,
+            "replace_text": replace_text
         }
         
         # Batch separation via newline layout
         lines = [line.strip() for line in raw_input.split('\n') if line.strip()]
         for line in lines:
-            transformed = transform_single_url(line, env, custom_domain, editor_action, use_http)
+            transformed = transform_single_url(
+                line, env, custom_domain, editor_action, use_http, find_text, replace_text
+            )
             results.append(transformed)
             
     return render_template_string(HTML_TEMPLATE, results=results, selected_opts=selected_opts)
