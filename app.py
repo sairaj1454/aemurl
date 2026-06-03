@@ -19,7 +19,14 @@ HTML_TEMPLATE = """
     <title>Advanced AEM URL Transformer</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; max-width: 1000px; color: #333; background-color: #fcfcfc; }
-        h2 { color: #222; border-bottom: 2px solid #007bff; padding-bottom: 8px; margin-bottom: 25px; }
+        h2 { color: #222; border-bottom: 2px solid #007bff; padding-bottom: 8px; margin-bottom: 15px; }
+        
+        /* New Easy-to-Read Feature Instruction Box */
+        .feature-banner { background-color: #f4f9ff; border: 1px solid #bce0ff; border-left: 5px solid #007bff; padding: 20px; border-radius: 6px; margin-bottom: 25px; }
+        .feature-banner h3 { margin: 0 0 12px 0; color: #0056b3; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .steps-container { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 10px; }
+        .step-card { background: #ffffff; padding: 12px; border-radius: 4px; border: 1px solid #dcebfa; font-size: 13px; line-height: 1.4; }
+        .step-num { font-weight: bold; color: #007bff; font-size: 14px; margin-bottom: 4px; display: block; }
         
         /* Two Column Input Layout */
         .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
@@ -100,11 +107,9 @@ HTML_TEMPLATE = """
                 button.innerText = "Copied!";
                 button.style.backgroundColor = "#28a745";
                 
-                // Read the state of the auto-delete switch toggle
                 var autoDeleteEnabled = document.getElementById("auto_delete_toggle").checked;
                 
                 if (autoDeleteEnabled) {
-                    // Automatically delete row after a slight delay so user sees "Copied!" confirmation
                     setTimeout(function() {
                         deleteRow(button);
                     }, 400);
@@ -124,7 +129,6 @@ HTML_TEMPLATE = """
             var parentBlock = button.closest('.result-group-block');
             if (row) { row.remove(); }
             
-            // Clean up empty cards if all URLs inside it have been cleared
             if (parentBlock && parentBlock.querySelectorAll('.result-item').length === 0) {
                 parentBlock.remove();
             }
@@ -160,16 +164,35 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <h2>Advanced AEM URL Transformer</h2>
+    
+    <div class="feature-banner">
+        <h3>🚀 New Feature: Batch URL Transformation & Pairing</h3>
+        <div class="steps-container">
+            <div class="step-card">
+                <span class="step-num">Step 1: Paste Multiple URLs</span>
+                Paste your baseline list of URLs or paths into <strong>Box 1</strong> (one link per line).
+            </div>
+            <div class="step-card">
+                <span class="step-num">Step 2: Paste Matching Legacy URLs</span>
+                Paste your old/legacy links into <strong>Box 2</strong> in the exact same order (one link per line).
+            </div>
+            <div class="step-card">
+                <span class="step-num">Step 3: Run Batch Action</span>
+                Click <strong>"Transform & Pair URLs"</strong>. The app matches them row-by-row into neat, grouped blocks!
+            </div>
+        </div>
+    </div>
+
     <form method="POST" action="/">
         
         <div class="input-grid">
             <div class="input-group">
                 <label for="url_input">1. Original URLs / Paths (One per line):</label>
-                <textarea name="url_input" id="url_input" placeholder="http://10.24.122.43:4502/editor.html/content/..."></textarea>
+                <textarea name="url_input" id="url_input" placeholder="💡 Paste 1 or multiple paths here...&#10;/content/aerobt/us/en/page1&#10;/content/aerobt/us/en/page2"></textarea>
             </div>
             <div class="input-group">
                 <label for="legacy_input">2. Corresponding Legacy URLs / Plain Paths (One per line):</label>
-                <textarea name="legacy_input" id="legacy_input" placeholder="/content/aerobt/us/en/..."></textarea>
+                <textarea name="legacy_input" id="legacy_input" placeholder="💡 Paste matching older paths here...&#10;/content/legacy/us/en/old-page1&#10;/content/legacy/us/en/old-page2"></textarea>
             </div>
         </div>
         
