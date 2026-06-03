@@ -1,7 +1,11 @@
 from flask import Flask, request, render_template_string
 from urllib.parse import urlparse, urlunparse
+import json
+import os
 
 app = Flask(__name__)
+
+CACHE_FILE = "stats_cache.json"
 
 # Predefined environments mapping
 DOMAINS = {
@@ -12,6 +16,28 @@ DOMAINS = {
     "custom": ""  # Handled dynamically via text input
 }
 
+def load_cached_stats():
+    """Load the total processed URLs counter from disk cache."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                data = json.load(f)
+                return data.get("total_processed", 0)
+        except Exception:
+            return 0
+    return 0
+
+def update_cached_stats(count_to_add):
+    """Increment and save the total processed counter into disk cache."""
+    current_total = load_cached_stats()
+    new_total = current_total + count_to_add
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump({"total_processed": new_total}, f)
+    except Exception as e:
+        print(f"Cache write error: {e}")
+    return new_total
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -21,6 +47,13 @@ HTML_TEMPLATE = """
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; max-width: 1000px; color: #333; background-color: #fcfcfc; }
         h2 { color: #222; border-bottom: 2px solid #007bff; padding-bottom: 8px; margin-bottom: 15px; }
         
+        /* Dashboard Stats Grid */
+        .stats-dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        .stat-box { background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; display: flex; flex-direction: column; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .stat-val { font-size: 24px; font-weight: bold; color: #2b6cb0; margin-bottom: 4px; }
+        .stat-label { font-size: 13px; color: #718096; font-weight: 500; }
+        .time-saved { color: #2f855a; }
+        
         /* New Easy-to-Read Feature Instruction Box */
         .feature-banner { background-color: #f4f9ff; border: 1px solid #bce0ff; border-left: 5px solid #007bff; padding: 20px; border-radius: 6px; margin-bottom: 25px; }
         .feature-banner h3 { margin: 0 0 12px 0; color: #0056b3; font-size: 16px; display: flex; align-items: center; gap: 8px; }
@@ -28,6 +61,9 @@ HTML_TEMPLATE = """
         .step-card { background: #ffffff; padding: 12px; border-radius: 4px; border: 1px solid #dcebfa; font-size: 13px; line-height: 1.4; }
         .step-num { font-weight: bold; color: #007bff; font-size: 14px; margin-bottom: 4px; display: block; }
         
+        /* Notice Banner */
+        .notice-bar { background-color: #fffaf0; border: 1px solid #feebc8; border-radius: 4px; padding: 10px 15px; margin-bottom: 20px; font-size: 13px; color: #c05621; display: flex; align-items: center; gap: 8px; font-weight: 500; }
+
         /* Two Column Input Layout */
         .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
         .input-group { display: flex; flex-direction: column; }
@@ -165,8 +201,26 @@ HTML_TEMPLATE = """
 <body>
     <h2>Advanced AEM URL Transformer</h2>
     
+    <!-- Real-time metrics counters dashboard -->
+    <div class="stats-dashboard">
+        <div class="stat-box">
+            <span class="stat-val">{{ total_processed }}</span>
+            <span class="stat-label">Total URLs Processed Today</span>
+        </div>
+        <div class="stat-box">
+            <span class="stat-val time-saved">{{ hours_saved }}h {{ mins_saved }}m</span>
+            <span class="stat-label">Estimated Manual Entry Time Saved (1.5 min / pair)</span>
+        </div>
+    </div>
+
+    <!-- Caching hint notification bar -->
+    <div class="notice-bar">
+        ⚠️ <strong>Tip:</strong> Avoid refreshing the browser tab unnecessarily to maintain your current visible paired preview workspace lists below.
+    </div>
+    
+    <!-- Super Clean, Step-By-Step Instruction Banner -->
     <div class="feature-banner">
-        <h3>🚀 New Feature: Batch URL Transformation & Pairing</h3>
+        <h3>🚀 Feature Guide: Batch URL Transformation & Pairing</h3>
         <div class="steps-container">
             <div class="step-card">
                 <span class="step-num">Step 1: Paste Multiple URLs</span>
@@ -358,6 +412,9 @@ def home():
         "use_http": False, "find_text": "", "migrated_replace": ""
     }
     
+    # Check current cached counts
+    total_processed = load_cached_stats()
+    
     if request.method == 'POST':
         raw_input = request.form.get('url_input', '')
         legacy_input = request.form.get('legacy_input', '')
@@ -379,6 +436,7 @@ def home():
         
         max_length = max(len(orig_lines), len(legacy_lines))
         
+        new_items_count = 0
         for i in range(max_length):
             orig_url = orig_lines[i] if i < len(orig_lines) else ""
             raw_legacy = legacy_lines[i] if i < len(legacy_lines) else ""
@@ -394,13 +452,30 @@ def home():
                 legacy_url = format_legacy_url(raw_legacy, env, custom_domain, use_http)
             
             if orig_url or legacy_url:
+                new_items_count += 1
                 detailed_groups.append({
                     "original": orig_url,
                     "migrated": migrated_url,
                     "legacy": legacy_url
                 })
+        
+        # Save to file cache metric tracking
+        if new_items_count > 0:
+            total_processed = update_cached_stats(new_items_count)
             
-    return render_template_string(HTML_TEMPLATE, detailed_groups=detailed_groups, selected_opts=selected_opts)
+    # Calculate total savings: 1.5 mins per processed pair configuration block
+    total_minutes_saved = int(total_processed * 1.5)
+    hours_saved = total_minutes_saved // 60
+    mins_saved = total_minutes_saved % 60
+            
+    return render_template_string(
+        HTML_TEMPLATE, 
+        detailed_groups=detailed_groups, 
+        selected_opts=selected_opts,
+        total_processed=total_processed,
+        hours_saved=hours_saved,
+        mins_saved=mins_saved
+    )
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
