@@ -1,4 +1,4 @@
-\from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string
 from urllib.parse import urlparse, urlunparse, urljoin
 import json
 import os
