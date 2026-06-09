@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 CACHE_FILE = "stats_cache.json"
 
-# Predefined environments mapping
+# Predefined AEM Environments
 DOMAINS = {
     "qa": "qa-author.honeywellaerospace.com",
     "stage": "stage-author.honeywellaerospace.com",
@@ -43,9 +43,9 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Advanced AEM URL Transformer & Deep Image Scraper</title>
+    <title>Advanced AEM Toolset & Authenticated Deep Image Scraper</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; max-width: 1000px; color: #333; background-color: #fcfcfc; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; max-width: 1100px; color: #333; background-color: #fcfcfc; }
         h2 { color: #222; border-bottom: 2px solid #007bff; padding-bottom: 8px; margin-bottom: 15px; }
         h3 { color: #333; margin-top: 0; }
         
@@ -59,18 +59,17 @@ HTML_TEMPLATE = """
         .section-title { font-size: 16px; font-weight: bold; color: #0056b3; margin-bottom: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;}
 
         .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-        .input-group { display: flex; flex-direction: column; }
+        .input-group { display: flex; flex-direction: column; margin-bottom: 12px; }
         .input-group label { font-weight: bold; margin-bottom: 8px; font-size: 14px; color: #495057; }
-        textarea, input[type="url"] { width: 100%; font-family: monospace; padding: 12px; box-sizing: border-box; border: 1px solid #ced4da; border-radius: 4px; resize: vertical; }
+        textarea, input[type="url"], input[type="text"] { width: 100%; font-family: monospace; padding: 12px; box-sizing: border-box; border: 1px solid #ced4da; border-radius: 4px; resize: vertical; }
         textarea { height: 140px; }
-        textarea:focus, input[type="url"]:focus { border-color: #80bdff; outline: 0; box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25); }
+        textarea:focus, input[type="url"]:focus, input[type="text"]:focus { border-color: #80bdff; outline: 0; box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25); }
         
         .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; background: #f1f3f5; padding: 15px; border-radius: 6px; border: 1px solid #e9ecef; }
         .option-group { display: flex; flex-direction: column; }
         .option-group label { font-weight: bold; margin-bottom: 6px; font-size: 14px; }
-        select, input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: white; font-size: 14px; }
+        select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: white; font-size: 14px; }
         .custom-domain-container { margin-top: 10px; }
-        .custom-domain-container input { padding: 8px; width: 100%; font-family: monospace; box-sizing: border-box; }
         .checkbox-group { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 14px; }
         .checkbox-group input { width: 16px; height: 16px; cursor: pointer; }
         
@@ -115,6 +114,7 @@ HTML_TEMPLATE = """
         .badge-image { background-color: #e3f2fd; color: #006699; }
 
         .alert-error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 12px; border-radius: 4px; margin-bottom: 20px; font-size: 14px;}
+        .cookie-hint { font-size: 12px; color: #6c757d; margin-top: 5px; line-height: 1.4; }
     </style>
     <script>
         function toggleCustomInput() {
@@ -122,10 +122,8 @@ HTML_TEMPLATE = """
             var customContainer = document.getElementById("custom_domain_container");
             if (envSelect && envSelect.value === "custom") {
                 customContainer.style.display = "block";
-                document.getElementById("custom_domain").required = true;
             } else if (customContainer) {
                 customContainer.style.display = "none";
-                document.getElementById("custom_domain").required = false;
             }
         }
 
@@ -166,10 +164,10 @@ HTML_TEMPLATE = """
             var urls = [];
             links.forEach(function(link) { urls.push(link.href); });
             
-            var joinString = urls.join('\n');
-            var copyAllBtn = document.getElementById('copy_all_btn');
+            if (urls.length === 0) return;
             
-            navigator.clipboard.writeText(joinString).then(function() {
+            navigator.clipboard.writeText(urls.join('\n')).then(function() {
+                var copyAllBtn = document.getElementById('copy_all_btn');
                 var originalText = copyAllBtn.innerText;
                 copyAllBtn.innerText = "All Links Copied!";
                 copyAllBtn.style.backgroundColor = "#1e7e34";
@@ -204,16 +202,24 @@ HTML_TEMPLATE = """
     {% endif %}
 
     <div class="section-container">
-        <div class="section-title">🔍 Feature: Deep Inspect & Scrape All Images (Src, Srcset, Lazy Data, CSS Backgrounds)</div>
+        <div class="section-title">🔍 Feature: Deep Inspect & Scrape All Images (Supports Protected Stage Pages)</div>
         <form method="POST" action="/">
             <input type="hidden" name="action_type" value="extract_images">
+            
             <div class="input-group">
                 <label for="scrape_url">Target Webpage URL to Scrape:</label>
-                <div style="display: flex; gap: 10px;">
-                    <input type="url" id="scrape_url" name="scrape_url" placeholder="https://example.com/page.html" required value="{{ scraped_target_url }}">
-                    <input type="submit" class="btn-primary" value="Inspect & Extract" style="padding: 0 20px; white-space: nowrap;">
+                <input type="url" id="scrape_url" name="scrape_url" placeholder="https://stage-author.honeywellaerospace.com/content/...html" required value="{{ scraped_target_url }}">
+            </div>
+
+            <div class="input-group">
+                <label for="cookie_string">Active Browser Cookie Header Content (Required for Secure/Stage Walls):</label>
+                <input type="text" id="cookie_string" name="cookie_string" placeholder="login_oauth_token=xyz; jsessionid=abc;..." value="{{ cookie_string }}">
+                <div class="cookie-hint">
+                    <strong>To Extract:</strong> open the page in your browser ➔ hit <strong>F12</strong> ➔ go to <strong>Network</strong> tab ➔ refresh ➔ click the main document request ➔ copy everything inside the <strong>Cookie:</strong> request header.
                 </div>
             </div>
+            
+            <input type="submit" class="btn-primary" value="Inspect & Extract Every Image">
         </form>
     </div>
     
@@ -317,6 +323,7 @@ HTML_TEMPLATE = """
             <div class="result-group-block">
                 <div class="result-group-title">URL Batch Pair #{{ loop.index }}</div>
                 
+                {% if group.original %}
                 <div class="result-item type-original">
                     <div class="result-url">
                         <span class="url-badge badge-original">Original</span>
@@ -327,7 +334,9 @@ HTML_TEMPLATE = """
                         <button class="btn-danger" onclick="deleteRow(this)">Delete</button>
                     </div>
                 </div>
+                {% endif %}
 
+                {% if group.migrated %}
                 <div class="result-item type-migrated">
                     <div class="result-url">
                         <span class="url-badge badge-migrated">Migrated</span>
@@ -338,6 +347,7 @@ HTML_TEMPLATE = """
                         <button class="btn-danger" onclick="deleteRow(this)">Delete</button>
                     </div>
                 </div>
+                {% endif %}
 
                 {% if group.legacy %}
                 <div class="result-item type-legacy">
@@ -408,6 +418,7 @@ def home():
     detailed_groups = []
     image_data = []
     scraped_target_url = ""
+    cookie_string = ""
     error_msg = ""
     
     selected_opts = {
@@ -420,13 +431,23 @@ def home():
     if request.method == 'POST':
         action_type = request.form.get('action_type', 'transform_urls')
         
-        # --- NEW DEEP INSPECTOR LOGIC ---
+        # --- LOGIC: COMPREHENSIVE AUTHENTICATED IMAGE EXTRACTOR ---
         if action_type == 'extract_images':
             scraped_target_url = request.form.get('scrape_url', '').strip()
+            cookie_string = request.form.get('cookie_string', '').strip()
+            
             if scraped_target_url:
                 try:
-                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                    response = requests.get(scraped_target_url, headers=headers, timeout=12)
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.5"
+                    }
+                    
+                    if cookie_string:
+                        headers["Cookie"] = cookie_string
+
+                    response = requests.get(scraped_target_url, headers=headers, timeout=15)
                     
                     if response.status_code == 200:
                         soup = BeautifulSoup(response.text, 'html.parser')
@@ -434,9 +455,7 @@ def home():
                         
                         def register_url(raw_url, label):
                             if not raw_url: return
-                            raw_url = raw_url.strip()
-                            # Clean wrapper punctuation sometimes found in data-attributes or CSS strings
-                            raw_url = raw_url.strip("'\"() ")
+                            raw_url = raw_url.strip().strip("'\"() ")
                             if not raw_url or raw_url.startswith("data:image"): return
                             
                             full_url = urljoin(scraped_target_url, raw_url)
@@ -444,43 +463,45 @@ def home():
                                 seen_urls.add(full_url)
                                 image_data.append({"url": full_url, "type": label})
 
-                        # 1. Look through standard elements & common custom data/lazy-load targets
-                        for el in soup.find_all(True):  # Checks every DOM node
-                            # Extract common image sources
+                        # Deep search all elements inside the page tree layout
+                        for el in soup.find_all(True):
+                            # Standard Image Tag Src
                             if el.name == 'img':
                                 register_url(el.get('src'), "Img Src")
                             
-                            # Extract Responsive Srcsets
+                            # Responsive Layout Srcsets
                             if el.get('srcset'):
-                                # Srcset formats can look like: "image-320w.jpg 320w, image-640w.jpg 640w"
                                 parts = el.get('srcset').split(',')
                                 for part in parts:
                                     chunks = part.strip().split(' ')
                                     if chunks: register_url(chunks[0], "Srcset Asset")
                             
-                            # Extract Lazy Load / Authoring Framework Data Attributes
+                            # Lazy Loading Framework parameters
                             for attr, val in list(el.attrs.items()):
                                 if attr.startswith('data-src') or attr in ['data-lazy', 'data-original', 'data-fallback']:
                                     if isinstance(val, list): val = " ".join(val)
                                     register_url(val, f"Lazy Load ({attr})")
 
-                            # 2. Extract CSS inline background images
+                            # Embedded/Inline CSS Background properties
                             style_str = el.get('style')
                             if style_str and 'background' in style_str:
                                 match = re.search(r'url\(([^)]+)\)', style_str)
-                                if match:
+                                if match: 
                                     register_url(match.group(1), "CSS Background")
-                                    
-                        # 3. Handle <source> nodes directly (used within <picture> tags)
+                        
+                        # Fallback parsing for alternative video/picture resource elements
                         for source in soup.find_all('source'):
                             register_url(source.get('src'), "Source Attr")
-
+                            
+                        if not image_data:
+                            if "login" in response.url.lower() or "siteminder" in response.text.lower():
+                                error_msg = "The authentication token was rejected or expired. The response received was a login redirect portal view."
                     else:
-                        error_msg = f"Failed to retrieve target workspace page. Status code: {response.status_code}"
+                        error_msg = f"Failed connection response. Status code: {response.status_code}. The page could not be accessed."
                 except Exception as e:
-                    error_msg = f"Inspection failed: {str(e)}"
+                    error_msg = f"Inspection process error exception encountered: {str(e)}"
 
-        # --- CORE BATCH MIGRATION ACTIONS ---
+        # --- LOGIC: BATCH URL CONVERSION & METRIC TRACKING ---
         elif action_type == 'transform_urls':
             raw_input = request.form.get('url_input', '')
             legacy_input = request.form.get('legacy_input', '')
@@ -531,6 +552,7 @@ def home():
         detailed_groups=detailed_groups, 
         image_data=image_data,
         scraped_target_url=scraped_target_url,
+        cookie_string=cookie_string,
         error_msg=error_msg,
         selected_opts=selected_opts,
         total_processed=total_processed,
