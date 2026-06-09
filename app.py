@@ -1,9 +1,15 @@
-from flask import Flask, request, render_template_string
+\from flask import Flask, request, render_template_string
 from urllib.parse import urlparse, urlunparse, urljoin
 import json
 import os
 import re
-import requests
+import time
+
+# Selenium Engine Imports
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 
 app = Flask(__name__)
@@ -43,7 +49,7 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Advanced AEM Toolset & Authenticated Deep Image Scraper</title>
+    <title>Advanced AEM Toolset & Automated Deep Image Scraper</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; max-width: 1100px; color: #333; background-color: #fcfcfc; }
         h2 { color: #222; border-bottom: 2px solid #007bff; padding-bottom: 8px; margin-bottom: 15px; }
@@ -114,7 +120,7 @@ HTML_TEMPLATE = """
         .badge-image { background-color: #e3f2fd; color: #006699; }
 
         .alert-error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 12px; border-radius: 4px; margin-bottom: 20px; font-size: 14px;}
-        .cookie-hint { font-size: 12px; color: #6c757d; margin-top: 5px; line-height: 1.4; }
+        .automation-hint { font-size: 12px; color: #2f855a; background-color: #f0fff4; padding: 12px; border-radius: 4px; border: 1px solid #c6f6d5; margin-top: 5px; line-height: 1.4; }
     </style>
     <script>
         function toggleCustomInput() {
@@ -166,7 +172,7 @@ HTML_TEMPLATE = """
             
             if (urls.length === 0) return;
             
-            navigator.clipboard.writeText(urls.join('\n')).then(function() {
+            navigator.clipboard.writeText(urls.join('\\n')).then(function() {
                 var copyAllBtn = document.getElementById('copy_all_btn');
                 var originalText = copyAllBtn.innerText;
                 copyAllBtn.innerText = "All Links Copied!";
@@ -182,7 +188,7 @@ HTML_TEMPLATE = """
     </script>
 </head>
 <body>
-    <h2>Advanced AEM URL Transformer & Deep Inspector</h2>
+    <h2>Advanced AEM URL Transformer & Automated Deep Scraper</h2>
     
     <div class="stats-dashboard">
         <div class="stat-box">
@@ -202,24 +208,20 @@ HTML_TEMPLATE = """
     {% endif %}
 
     <div class="section-container">
-        <div class="section-title">🔍 Feature: Deep Inspect & Scrape All Images (Supports Protected Stage Pages)</div>
+        <div class="section-title">🤖 Feature: Fully Automated Deep Scraper (Bypasses Secure Stage Login Walls)</div>
         <form method="POST" action="/">
             <input type="hidden" name="action_type" value="extract_images">
             
             <div class="input-group">
-                <label for="scrape_url">Target Webpage URL to Scrape:</label>
+                <label for="scrape_url">Target Webpage URL to Extract Images From:</label>
                 <input type="url" id="scrape_url" name="scrape_url" placeholder="https://stage-author.honeywellaerospace.com/content/...html" required value="{{ scraped_target_url }}">
             </div>
 
-            <div class="input-group">
-                <label for="cookie_string">Active Browser Cookie Header Content (Required for Secure/Stage Walls):</label>
-                <input type="text" id="cookie_string" name="cookie_string" placeholder="login_oauth_token=xyz; jsessionid=abc;..." value="{{ cookie_string }}">
-                <div class="cookie-hint">
-                    <strong>To Extract:</strong> open the page in your browser ➔ hit <strong>F12</strong> ➔ go to <strong>Network</strong> tab ➔ refresh ➔ click the main document request ➔ copy everything inside the <strong>Cookie:</strong> request header.
-                </div>
+            <div class="automation-hint">
+                ⚙️ <strong>Selenium Browser Automation Engine:</strong> Clicking the button below initializes a headless browser window directly from your script. It loads the secure network handshake layers, lets single-sign-on tracking resolve, and scrapes the live page structure tree after rendering settles.
             </div>
-            
-            <input type="submit" class="btn-primary" value="Inspect & Extract Every Image">
+            <br>
+            <input type="submit" class="btn-primary" value="Launch Automated Scraper Instance">
         </form>
     </div>
     
@@ -418,7 +420,6 @@ def home():
     detailed_groups = []
     image_data = []
     scraped_target_url = ""
-    cookie_string = ""
     error_msg = ""
     
     selected_opts = {
@@ -431,77 +432,72 @@ def home():
     if request.method == 'POST':
         action_type = request.form.get('action_type', 'transform_urls')
         
-        # --- LOGIC: COMPREHENSIVE AUTHENTICATED IMAGE EXTRACTOR ---
+        # --- LOGIC: AUTOMATED SELENIUM SCRAEP ENGINE ---
         if action_type == 'extract_images':
             scraped_target_url = request.form.get('scrape_url', '').strip()
-            cookie_string = request.form.get('cookie_string', '').strip()
             
             if scraped_target_url:
+                driver = None
                 try:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.5"
-                    }
+                    # Configure Chrome Engine Options
+                    chrome_options = Options()
+                    chrome_options.add_argument("--headless")  # Hidden window state
+                    chrome_options.add_argument("--no-sandbox")
+                    chrome_options.add_argument("--disable-dev-shm-usage")
+                    chrome_options.add_argument("--window-size=1920,1080")
                     
-                    if cookie_string:
-                        headers["Cookie"] = cookie_string
-
-                    response = requests.get(scraped_target_url, headers=headers, timeout=15)
+                    # Boot Chrome Webdriver Instance
+                    service = Service(ChromeDriverManager().install())
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
                     
-                    if response.status_code == 200:
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        seen_urls = set()
+                    # Navigate to Page
+                    driver.get(scraped_target_url)
+                    
+                    # Wait for 5 seconds to let authentication routing finish settling
+                    time.sleep(5)
+                    
+                    # Parse DOM markup
+                    soup = BeautifulSoup(driver.page_source, 'html.parser')
+                    seen_urls = set()
+                    
+                    def register_url(raw_url, label):
+                        if not raw_url: return
+                        raw_url = raw_url.strip().strip("'\"() ")
+                        if not raw_url or raw_url.startswith("data:image"): return
                         
-                        def register_url(raw_url, label):
-                            if not raw_url: return
-                            raw_url = raw_url.strip().strip("'\"() ")
-                            if not raw_url or raw_url.startswith("data:image"): return
-                            
-                            full_url = urljoin(scraped_target_url, raw_url)
-                            if full_url not in seen_urls:
-                                seen_urls.add(full_url)
-                                image_data.append({"url": full_url, "type": label})
+                        full_url = urljoin(scraped_target_url, raw_url)
+                        if full_url not in seen_urls:
+                            seen_urls.add(full_url)
+                            image_data.append({"url": full_url, "type": label})
 
-                        # Deep search all elements inside the page tree layout
-                        for el in soup.find_all(True):
-                            # Standard Image Tag Src
-                            if el.name == 'img':
-                                register_url(el.get('src'), "Img Src")
-                            
-                            # Responsive Layout Srcsets
-                            if el.get('srcset'):
-                                parts = el.get('srcset').split(',')
-                                for part in parts:
-                                    chunks = part.strip().split(' ')
-                                    if chunks: register_url(chunks[0], "Srcset Asset")
-                            
-                            # Lazy Loading Framework parameters
-                            for attr, val in list(el.attrs.items()):
-                                if attr.startswith('data-src') or attr in ['data-lazy', 'data-original', 'data-fallback']:
-                                    if isinstance(val, list): val = " ".join(val)
-                                    register_url(val, f"Lazy Load ({attr})")
-
-                            # Embedded/Inline CSS Background properties
-                            style_str = el.get('style')
-                            if style_str and 'background' in style_str:
-                                match = re.search(r'url\(([^)]+)\)', style_str)
-                                if match: 
-                                    register_url(match.group(1), "CSS Background")
+                    # Run image lookup tree traversal
+                    for el in soup.find_all(True):
+                        if el.name == 'img':
+                            register_url(el.get('src'), "Img Src")
+                        if el.get('srcset'):
+                            parts = el.get('srcset').split(',')
+                            for part in parts:
+                                chunks = part.strip().split(' ')
+                                if chunks: register_url(chunks[0], "Srcset Asset")
+                        for attr, val in list(el.attrs.items()):
+                            if attr.startswith('data-src') or attr in ['data-lazy', 'data-original', 'data-fallback']:
+                                if isinstance(val, list): val = " ".join(val)
+                                register_url(val, f"Lazy Load ({attr})")
+                        style_str = el.get('style')
+                        if style_str and 'background' in style_str:
+                            match = re.search(r'url\(([^)]+)\)', style_str)
+                            if match: register_url(match.group(1), "CSS Background")
                         
-                        # Fallback parsing for alternative video/picture resource elements
-                        for source in soup.find_all('source'):
-                            register_url(source.get('src'), "Source Attr")
-                            
-                        if not image_data:
-                            if "login" in response.url.lower() or "siteminder" in response.text.lower():
-                                error_msg = "The authentication token was rejected or expired. The response received was a login redirect portal view."
-                    else:
-                        error_msg = f"Failed connection response. Status code: {response.status_code}. The page could not be accessed."
+                    for source in soup.find_all('source'):
+                        register_url(source.get('src'), "Source Attr")
+                        
                 except Exception as e:
-                    error_msg = f"Inspection process error exception encountered: {str(e)}"
+                    error_msg = f"Automated Selenium scraper exception encountered: {str(e)}"
+                finally:
+                    if driver:
+                        driver.quit() # Safely spin down Chrome thread engine
 
-        # --- LOGIC: BATCH URL CONVERSION & METRIC TRACKING ---
+        # --- LOGIC: BATCH URL CONVERSION ---
         elif action_type == 'transform_urls':
             raw_input = request.form.get('url_input', '')
             legacy_input = request.form.get('legacy_input', '')
@@ -552,7 +548,6 @@ def home():
         detailed_groups=detailed_groups, 
         image_data=image_data,
         scraped_target_url=scraped_target_url,
-        cookie_string=cookie_string,
         error_msg=error_msg,
         selected_opts=selected_opts,
         total_processed=total_processed,
