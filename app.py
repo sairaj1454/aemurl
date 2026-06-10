@@ -6,10 +6,13 @@ from urllib.parse import urlparse, urlunparse
 from flask import Flask, render_template_string, request
 from openpyxl import load_workbook
 
-app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Excel upload limit
-
 IS_VERCEL = bool(os.environ.get("VERCEL"))
+
+app = Flask(__name__)
+# Vercel hard-caps request bodies at 4.5 MB; Excel is parsed client-side instead.
+app.config["MAX_CONTENT_LENGTH"] = (
+    4 * 1024 * 1024 if IS_VERCEL else 10 * 1024 * 1024
+)
 CACHE_FILE = (
     "/tmp/stats_cache.json"
     if IS_VERCEL
@@ -152,7 +155,10 @@ HTML_TEMPLATE = """
         .error-bar { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; font-size: 13px; }
         .slug-label { font-size: 11px; color: #718096; margin-top: 4px; }
         .mode-divider { border-top: 1px solid #dee2e6; margin: 20px 0; text-align: center; color: #6c757d; font-size: 13px; font-weight: 600; }
+        .excel-status { font-size: 12px; color: #2b6cb0; margin-top: 8px; font-weight: 600; }
+        .btn-primary:disabled { opacity: 0.7; cursor: wait; }
     </style>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script>
         function toggleCustomInput() {
             var envSelect = document.getElementById("env");
@@ -224,7 +230,139 @@ HTML_TEMPLATE = """
             });
         }
 
-        window.onload = toggleCustomInput;
+        function parseExcelRows(rows) {
+            var authorCol = null;
+            var legacyCol = null;
+            var authorLinks = [];
+            var legacyPaths = [];
+
+            for (var i = 0; i < rows.length; i++) {
+                var row = rows[i] || [];
+                if (i === 0) {
+                    for (var j = 0; j < row.length; j++) {
+                        var lower = String(row[j] || "").toLowerCase();
+                        if (lower.indexOf("author") !== -1 && lower.indexOf("link") !== -1) {
+                            authorCol = j;
+                        } else if (lower.indexOf("legacy") !== -1 && lower.indexOf("path") !== -1) {
+                            legacyCol = j;
+                        }
+                    }
+                    if (authorCol === null && legacyCol === null) {
+                        authorCol = 0;
+                        legacyCol = 1;
+                    }
+                    continue;
+                }
+
+                if (authorCol !== null && row[authorCol]) {
+                    authorLinks.push(String(row[authorCol]).trim());
+                }
+                if (legacyCol !== null && row[legacyCol]) {
+                    legacyPaths.push(String(row[legacyCol]).trim());
+                }
+            }
+
+            return { authorLinks: authorLinks, legacyPaths: legacyPaths };
+        }
+
+        function estimatePayloadSize(authorText, legacyText) {
+            return new Blob([authorText, legacyText]).size;
+        }
+
+        function handleExcelSubmit(event) {
+            var form = event.target;
+            var fileInput = document.getElementById("excel_file");
+            var statusEl = document.getElementById("excel_status");
+            var submitBtn = form.querySelector(".btn-primary");
+
+            if (!fileInput || !fileInput.files || !fileInput.files.length) {
+                var authorText = document.getElementById("url_input").value;
+                var legacyText = document.getElementById("legacy_input").value;
+                if (estimatePayloadSize(authorText, legacyText) > 4194304) {
+                    event.preventDefault();
+                    alert(
+                        "Your pasted data is too large for cloud hosting (4.5 MB limit). " +
+                        "Split the list into smaller batches and run them separately."
+                    );
+                }
+                return;
+            }
+
+            event.preventDefault();
+
+            if (typeof XLSX === "undefined") {
+                alert("Excel parser failed to load. Please paste URLs manually or refresh the page.");
+                return;
+            }
+
+            var file = fileInput.files[0];
+            submitBtn.disabled = true;
+            submitBtn.value = "Parsing Excel...";
+            if (statusEl) {
+                statusEl.textContent = "Reading " + file.name + " in your browser (not uploaded to server)...";
+            }
+
+            var reader = new FileReader();
+            reader.onload = function(loadEvent) {
+                try {
+                    var workbook = XLSX.read(loadEvent.target.result, { type: "array" });
+                    var sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    var rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+                    var parsed = parseExcelRows(rows);
+
+                    if (!parsed.authorLinks.length) {
+                        throw new Error("No Author Link values found. Check column headers.");
+                    }
+
+                    var authorText = parsed.authorLinks.join("\\n");
+                    var legacyText = parsed.legacyPaths.join("\\n");
+                    if (estimatePayloadSize(authorText, legacyText) > 4194304) {
+                        throw new Error(
+                            "Extracted data exceeds the 4.5 MB cloud limit. Split the Excel into smaller files."
+                        );
+                    }
+
+                    document.getElementById("url_input").value = authorText;
+                    document.getElementById("legacy_input").value = legacyText;
+                    document.getElementById("smart_match").checked = true;
+                    fileInput.value = "";
+
+                    if (statusEl) {
+                        statusEl.textContent =
+                            "Loaded " + parsed.authorLinks.length + " author links and " +
+                            parsed.legacyPaths.length + " legacy paths. Transforming...";
+                    }
+
+                    submitBtn.disabled = false;
+                    submitBtn.value = "Transform & Pair URLs";
+                    form.submit();
+                } catch (err) {
+                    submitBtn.disabled = false;
+                    submitBtn.value = "Transform & Pair URLs";
+                    if (statusEl) {
+                        statusEl.textContent = "";
+                    }
+                    alert("Excel error: " + err.message);
+                }
+            };
+            reader.onerror = function() {
+                submitBtn.disabled = false;
+                submitBtn.value = "Transform & Pair URLs";
+                if (statusEl) {
+                    statusEl.textContent = "";
+                }
+                alert("Could not read the Excel file.");
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        window.onload = function() {
+            toggleCustomInput();
+            var form = document.querySelector("form");
+            if (form) {
+                form.addEventListener("submit", handleExcelSubmit);
+            }
+        };
     </script>
 </head>
 <body>
@@ -267,12 +405,13 @@ HTML_TEMPLATE = """
     <div class="error-bar">{{ excel_error }}</div>
     {% endif %}
 
-    <form method="POST" action="/" enctype="multipart/form-data">
+    <form method="POST" action="/">
 
         <div class="excel-upload-box">
-            <label for="excel_file">📁 Upload Excel (.xlsx) — Author Link + Legacy Path columns</label>
-            <input type="file" id="excel_file" name="excel_file" accept=".xlsx,.xls">
-            <div class="excel-hint">Columns can be in any order and rows do not need to align. Matching is done by page slug (filename without .html).</div>
+            <label for="excel_file">📁 Select Excel (.xlsx) — Author Link + Legacy Path columns</label>
+            <input type="file" id="excel_file" accept=".xlsx,.xls">
+            <div class="excel-hint">Parsed in your browser — the file is never uploaded. Works on Vercel (4.5 MB cloud limit bypassed). Columns can be jumbled; matching is by page slug.</div>
+            <div class="excel-status" id="excel_status"></div>
         </div>
 
         <div class="mode-divider">— OR paste manually —</div>
@@ -686,7 +825,10 @@ def request_entity_too_large(_error):
             hours_saved=0,
             mins_saved=0,
             match_summary=None,
-            excel_error="Uploaded file is too large. Maximum size is 10 MB.",
+            excel_error=(
+                "Request too large for cloud hosting (4.5 MB limit). "
+                "Use Excel select (parsed in browser) or split into smaller batches."
+            ),
         ),
         413,
     )
