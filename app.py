@@ -1,11 +1,20 @@
+import io
 import json
 import os
 from urllib.parse import urlparse, urlunparse
+
 from flask import Flask, render_template_string, request
+from openpyxl import load_workbook
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB Excel upload limit
 
-CACHE_FILE = "stats_cache.json"
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+CACHE_FILE = (
+    "/tmp/stats_cache.json"
+    if IS_VERCEL
+    else os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats_cache.json")
+)
 
 # Predefined environments mapping
 DOMAINS = {
@@ -127,6 +136,22 @@ HTML_TEMPLATE = """
         .badge-original { background-color: #ebf8ff; color: #2b6cb0; }
         .badge-migrated { background-color: #f0fff4; color: #22543d; }
         .badge-legacy { background-color: #fffaf0; color: #744210; }
+        .badge-unmatched { background-color: #fff5f5; color: #c53030; }
+        .badge-matched { background-color: #f0fff4; color: #276749; }
+        .badge-ambiguous { background-color: #fffaf0; color: #c05621; }
+
+        .excel-upload-box { background: #f8f9fa; border: 2px dashed #007bff; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+        .excel-upload-box label { font-weight: bold; display: block; margin-bottom: 8px; }
+        .excel-upload-box input[type="file"] { font-size: 14px; }
+        .excel-hint { font-size: 12px; color: #6c757d; margin-top: 8px; }
+        .match-summary { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 15px; font-size: 13px; }
+        .match-stat { padding: 6px 12px; border-radius: 4px; background: #edf2f7; font-weight: 600; }
+        .match-stat.ok { background: #c6f6d5; color: #22543d; }
+        .match-stat.warn { background: #feebc8; color: #c05621; }
+        .match-stat.err { background: #fed7d7; color: #c53030; }
+        .error-bar { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; font-size: 13px; }
+        .slug-label { font-size: 11px; color: #718096; margin-top: 4px; }
+        .mode-divider { border-top: 1px solid #dee2e6; margin: 20px 0; text-align: center; color: #6c757d; font-size: 13px; font-weight: 600; }
     </style>
     <script>
         function toggleCustomInput() {
@@ -221,24 +246,36 @@ HTML_TEMPLATE = """
     </div>
     
     <div class="feature-banner">
-        <h3>🚀 Feature Guide: Batch URL Transformation & Pairing</h3>
+        <h3>🚀 Feature Guide: Smart Slug Matching & Excel Upload</h3>
         <div class="steps-container">
             <div class="step-card">
-                <span class="step-num">Step 1: Paste Multiple URLs</span>
-                Flushing your baseline list of URLs or paths into <strong>Box 1</strong> (one link per line).
+                <span class="step-num">Step 1: Upload Excel or Paste URLs</span>
+                Upload an Excel with <strong>Author Link</strong> and <strong>Legacy Path</strong> columns, or paste into the text boxes below.
             </div>
             <div class="step-card">
-                <span class="step-num">Step 2: Paste Matching Legacy URLs</span>
-                Paste your old/legacy links into <strong>Box 2</strong> in the exact same order (one link per line).
+                <span class="step-num">Step 2: Auto-Match by Slug</span>
+                The app extracts the slug from each author link (e.g. <code>pirep-what-expect-when-expecting-fly-procedure</code>) and finds the matching legacy path — even when rows are jumbled.
             </div>
             <div class="step-card">
-                <span class="step-num">Step 3: Run Batch Action</span>
-                Click <strong>"Transform & Pair URLs"</strong>. The app matches them row-by-row into neat, grouped blocks!
+                <span class="step-num">Step 3: Get Transformed URLs</span>
+                Click <strong>"Transform & Pair URLs"</strong> to get migrated author URLs paired with their correct legacy URLs.
             </div>
         </div>
     </div>
 
-    <form method="POST" action="/">
+    {% if excel_error %}
+    <div class="error-bar">{{ excel_error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/" enctype="multipart/form-data">
+
+        <div class="excel-upload-box">
+            <label for="excel_file">📁 Upload Excel (.xlsx) — Author Link + Legacy Path columns</label>
+            <input type="file" id="excel_file" name="excel_file" accept=".xlsx,.xls">
+            <div class="excel-hint">Columns can be in any order and rows do not need to align. Matching is done by page slug (filename without .html).</div>
+        </div>
+
+        <div class="mode-divider">— OR paste manually —</div>
         
         <div class="input-grid">
             <div class="input-group">
@@ -286,6 +323,10 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="checkbox-group">
+            <input type="checkbox" id="smart_match" name="smart_match" value="true" {% if selected_opts.smart_match %}checked{% endif %}>
+            <label for="smart_match">Smart match by slug (recommended when legacy paths are jumbled / out of order)</label>
+        </div>
+        <div class="checkbox-group">
             <input type="checkbox" id="use_http" name="use_http" value="true" {% if selected_opts.use_http %}checked{% endif %}>
             <label for="use_http">Force HTTP protocol mapping instead of HTTPS for Migrated & Legacy URLs</label>
         </div>
@@ -305,10 +346,33 @@ HTML_TEMPLATE = """
                 <button id="copy_all_btn" class="btn-copy-all" onclick="copyAllUrls()">Copy All Generated Links</button>
             </div>
         </div>
+
+        {% if match_summary and match_summary.smart_match %}
+        <div class="match-summary">
+            <span class="match-stat">Total: {{ match_summary.total }}</span>
+            <span class="match-stat ok">Matched: {{ match_summary.matched }}</span>
+            {% if match_summary.unmatched > 0 %}
+            <span class="match-stat err">Unmatched: {{ match_summary.unmatched }}</span>
+            {% endif %}
+            {% if match_summary.ambiguous > 0 %}
+            <span class="match-stat warn">Ambiguous: {{ match_summary.ambiguous }}</span>
+            {% endif %}
+        </div>
+        {% endif %}
         
         {% for group in detailed_groups %}
             <div class="result-group-block">
-                <div class="result-group-title">URL Batch Pair #{{ loop.index }}</div>
+                <div class="result-group-title">
+                    URL Batch Pair #{{ loop.index }}
+                    {% if group.slug %} — slug: <code>{{ group.slug }}</code>{% endif %}
+                    {% if group.match_status == 'matched' %}
+                    <span class="url-badge badge-matched">Matched</span>
+                    {% elif group.match_status == 'unmatched' %}
+                    <span class="url-badge badge-unmatched">No Legacy Match</span>
+                    {% elif group.match_status == 'ambiguous' %}
+                    <span class="url-badge badge-ambiguous">Multiple Matches</span>
+                    {% endif %}
+                </div>
                 
                 {% if group.original %}
                 <div class="result-item type-original">
@@ -432,6 +496,202 @@ def format_legacy_url(input_str, env, custom_domain, use_http):
     return urlunparse((scheme, target_domain, path, "", "", ""))
 
 
+def extract_slug(value):
+    """Extract the page slug (last path segment, no .html) from a URL or path."""
+    if not value:
+        return ""
+
+    value = value.strip()
+    if value.startswith("http://") or value.startswith("https://"):
+        path = urlparse(value).path
+    else:
+        path = value if value.startswith("/") else f"/{value}"
+
+    if path.startswith("/editor.html"):
+        path = path.replace("/editor.html", "", 1)
+
+    segment = path.rstrip("/").split("/")[-1]
+    if segment.endswith(".html"):
+        segment = segment[:-5]
+    return segment.lower()
+
+
+def build_legacy_lookup(legacy_paths):
+    """Map slug -> legacy path. Duplicate slugs are stored as a list."""
+    lookup = {}
+    for path in legacy_paths:
+        slug = extract_slug(path)
+        if not slug:
+            continue
+        lookup.setdefault(slug, []).append(path)
+    return lookup
+
+
+def find_matching_legacy(author_link, legacy_lookup):
+    """Find the legacy path whose slug matches the author link slug."""
+    slug = extract_slug(author_link)
+    if not slug:
+        return "", slug, "no_slug"
+
+    matches = legacy_lookup.get(slug, [])
+    if len(matches) == 1:
+        return matches[0], slug, "matched"
+    if len(matches) > 1:
+        return matches[0], slug, "ambiguous"
+    return "", slug, "unmatched"
+
+
+def parse_excel_upload(file_storage):
+    """Read Author Link and Legacy Path columns from an uploaded Excel file."""
+    workbook = load_workbook(
+        io.BytesIO(file_storage.read()), read_only=True, data_only=True
+    )
+    sheet = workbook.active
+
+    author_links = []
+    legacy_paths = []
+    author_col = None
+    legacy_col = None
+
+    for row_idx, row in enumerate(sheet.iter_rows(values_only=True)):
+        if not row:
+            continue
+
+        cells = [str(c).strip() if c is not None else "" for c in row]
+
+        if row_idx == 0:
+            for col_idx, cell in enumerate(cells):
+                lower = cell.lower()
+                if "author" in lower and "link" in lower:
+                    author_col = col_idx
+                elif "legacy" in lower and "path" in lower:
+                    legacy_col = col_idx
+            if author_col is None and legacy_col is None:
+                author_col, legacy_col = 0, 1
+            continue
+
+        if author_col is not None and author_col < len(cells) and cells[author_col]:
+            author_links.append(cells[author_col])
+        if legacy_col is not None and legacy_col < len(cells) and cells[legacy_col]:
+            legacy_paths.append(cells[legacy_col])
+
+    workbook.close()
+    return author_links, legacy_paths
+
+
+def build_result_groups(
+    author_links,
+    legacy_paths,
+    env,
+    custom_domain,
+    editor_action,
+    use_http,
+    find_text,
+    migrated_replace,
+    smart_match=False,
+):
+    """Build paired result groups, optionally matching by slug instead of row order."""
+    detailed_groups = []
+    legacy_lookup = build_legacy_lookup(legacy_paths) if smart_match else {}
+
+    if smart_match:
+        for author_link in author_links:
+            raw_legacy, slug, status = find_matching_legacy(author_link, legacy_lookup)
+            migrated_url = transform_migrated_url(
+                author_link,
+                env,
+                custom_domain,
+                editor_action,
+                use_http,
+                find_text,
+                migrated_replace,
+            )
+            legacy_url = (
+                format_legacy_url(raw_legacy, env, custom_domain, use_http)
+                if raw_legacy
+                else ""
+            )
+            detailed_groups.append(
+                {
+                    "original": author_link,
+                    "migrated": migrated_url,
+                    "legacy": legacy_url,
+                    "slug": slug,
+                    "match_status": status,
+                }
+            )
+    else:
+        max_length = max(len(author_links), len(legacy_paths))
+        for i in range(max_length):
+            author_link = author_links[i] if i < len(author_links) else ""
+            raw_legacy = legacy_paths[i] if i < len(legacy_paths) else ""
+            migrated_url = ""
+            if author_link:
+                migrated_url = transform_migrated_url(
+                    author_link,
+                    env,
+                    custom_domain,
+                    editor_action,
+                    use_http,
+                    find_text,
+                    migrated_replace,
+                )
+            legacy_url = ""
+            if raw_legacy:
+                legacy_url = format_legacy_url(
+                    raw_legacy, env, custom_domain, use_http
+                )
+            if author_link or legacy_url:
+                detailed_groups.append(
+                    {
+                        "original": author_link,
+                        "migrated": migrated_url,
+                        "legacy": legacy_url,
+                        "slug": extract_slug(author_link) if author_link else "",
+                        "match_status": "row_order",
+                    }
+                )
+
+    return detailed_groups
+
+
+def get_form_options():
+    return {
+        "env": request.form.get("env", "qa"),
+        "custom_domain": request.form.get("custom_domain", ""),
+        "editor_action": request.form.get("editor_action", "force_add"),
+        "use_http": request.form.get("use_http") == "true",
+        "find_text": request.form.get("find_text", "").strip(),
+        "migrated_replace": request.form.get("migrated_replace", "").strip(),
+        "smart_match": request.form.get("smart_match") == "true",
+    }
+
+
+@app.errorhandler(413)
+def request_entity_too_large(_error):
+    return (
+        render_template_string(
+            HTML_TEMPLATE,
+            detailed_groups=[],
+            selected_opts={
+                "env": "qa",
+                "custom_domain": "",
+                "editor_action": "force_add",
+                "use_http": False,
+                "find_text": "",
+                "migrated_replace": "",
+                "smart_match": True,
+            },
+            total_processed=load_cached_stats(),
+            hours_saved=0,
+            mins_saved=0,
+            match_summary=None,
+            excel_error="Uploaded file is too large. Maximum size is 10 MB.",
+        ),
+        413,
+    )
+
+
 @app.route("/", methods=["GET", "POST"])
 def home():
     detailed_groups = []
@@ -442,76 +702,68 @@ def home():
         "use_http": False,
         "find_text": "",
         "migrated_replace": "",
+        "smart_match": True,
     }
 
     # Check current cached counts
     total_processed = load_cached_stats()
 
+    match_summary = None
+    excel_error = None
+
     if request.method == "POST":
-        raw_input = request.form.get("url_input", "")
-        legacy_input = request.form.get("legacy_input", "")
+        selected_opts = get_form_options()
+        author_links = []
+        legacy_paths = []
 
-        env = request.form.get("env", "qa")
-        custom_domain = request.form.get("custom_domain", "")
-        editor_action = request.form.get("editor_action", "force_add")
-        use_http = request.form.get("use_http") == "true"
-        find_text = request.form.get("find_text", "").strip()
-        migrated_replace = request.form.get("migrated_replace", "").strip()
+        excel_file = request.files.get("excel_file")
+        if excel_file and excel_file.filename:
+            try:
+                author_links, legacy_paths = parse_excel_upload(excel_file)
+                selected_opts["smart_match"] = True
+            except Exception as exc:
+                excel_error = f"Could not read Excel file: {exc}"
+        else:
+            raw_input = request.form.get("url_input", "")
+            legacy_input = request.form.get("legacy_input", "")
+            author_links = [
+                line.strip() for line in raw_input.split("\n") if line.strip()
+            ]
+            legacy_paths = [
+                line.strip() for line in legacy_input.split("\n") if line.strip()
+            ]
 
-        selected_opts = {
-            "env": env,
-            "custom_domain": custom_domain,
-            "editor_action": editor_action,
-            "use_http": use_http,
-            "find_text": find_text,
-            "migrated_replace": migrated_replace,
-        }
+        if not excel_error and author_links:
+            detailed_groups = build_result_groups(
+                author_links,
+                legacy_paths,
+                selected_opts["env"],
+                selected_opts["custom_domain"],
+                selected_opts["editor_action"],
+                selected_opts["use_http"],
+                selected_opts["find_text"],
+                selected_opts["migrated_replace"],
+                smart_match=selected_opts["smart_match"],
+            )
 
-        orig_lines = [
-            line.strip() for line in raw_input.split("\n") if line.strip()
-        ]
-        legacy_lines = [
-            line.strip() for line in legacy_input.split("\n") if line.strip()
-        ]
+            matched = sum(
+                1 for g in detailed_groups if g.get("match_status") == "matched"
+            )
+            unmatched = sum(
+                1 for g in detailed_groups if g.get("match_status") == "unmatched"
+            )
+            ambiguous = sum(
+                1 for g in detailed_groups if g.get("match_status") == "ambiguous"
+            )
+            match_summary = {
+                "total": len(detailed_groups),
+                "matched": matched,
+                "unmatched": unmatched,
+                "ambiguous": ambiguous,
+                "smart_match": selected_opts["smart_match"],
+            }
 
-        max_length = max(len(orig_lines), len(legacy_lines))
-
-        new_items_count = 0
-        for i in range(max_length):
-            orig_url = orig_lines[i] if i < len(orig_lines) else ""
-            raw_legacy = legacy_lines[i] if i < len(legacy_lines) else ""
-
-            migrated_url = ""
-            if orig_url:
-                migrated_url = transform_migrated_url(
-                    orig_url,
-                    env,
-                    custom_domain,
-                    editor_action,
-                    use_http,
-                    find_text,
-                    migrated_replace,
-                )
-
-            legacy_url = ""
-            if raw_legacy:
-                legacy_url = format_legacy_url(
-                    raw_legacy, env, custom_domain, use_http
-                )
-
-            if orig_url or legacy_url:
-                new_items_count += 1
-                detailed_groups.append(
-                    {
-                        "original": orig_url,
-                        "migrated": migrated_url,
-                        "legacy": legacy_url,
-                    }
-                )
-
-        # Save to file cache metric tracking
-        if new_items_count > 0:
-            total_processed = update_cached_stats(new_items_count)
+            total_processed = update_cached_stats(len(detailed_groups))
 
     # Calculate total savings: 1.5 mins per processed pair configuration block
     total_minutes_saved = int(total_processed * 1.5)
@@ -525,6 +777,8 @@ def home():
         total_processed=total_processed,
         hours_saved=hours_saved,
         mins_saved=mins_saved,
+        match_summary=match_summary,
+        excel_error=excel_error,
     )
 
 

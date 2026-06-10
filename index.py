@@ -1,4 +1,4 @@
-from app import app
+# Legacy entrypoint — Vercel uses app.py directly via zero-config detection.
+from app import app as application
 
-# Vercel looks for the 'app' or 'application' callable
-app = app
+app = application

@@ -1,0 +1,11 @@
+[project]
+name = "aem-url-transformer"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "Flask>=3.0.0",
+    "openpyxl>=3.1.0",
+]
+
+[tool.vercel]
+entrypoint = "app:app"
